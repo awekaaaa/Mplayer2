@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pemutar Musik Offline</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+</head>
+<body>
+    <div class="player-container">
+        <div class="now-playing">
+            <div class="visualizer-wrapper">
+                <canvas id="visualizer"></canvas>
+            </div>
+            <div class="controls-wrapper">
+                <div id="song-info">
+                    <h1 id="current-track">Pilih lagu</h1>
+                    <p id="artist-name">Dari daftar di bawah</p>
+                </div>
+                <audio id="audio-player" controls></audio>
+            </div>
+        </div>
+        <div id="playlist" class="playlist">
+            <div class="loader">Memuat daftar lagu...</div>
+        </div>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

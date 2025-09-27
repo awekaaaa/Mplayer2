@@ -1,37 +1,40 @@
 // =================================================================
-// UPGRADE V9.2: PERBAIKAN BUG 'cleanName is not defined'
+// UPGRADE V9.3: PERBAIKAN FINAL BUG 'cleanName is not defined'
 // =================================================================
 const API_URL = 'https://script.google.com/macros/s/AKfycbxVe4cDHxJ0FjmD4hcafufyGnPWjx75_n5OYTQENWgEhKffjuTkBSoWyY-CgOustyHosg/exec'; // Pastikan URL ini benar
 
 // --- Variabel State dan Elemen DOM ---
-if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('/sw.js').then(reg => console.log('Service Worker terdaftar!', reg)).catch(err => console.error('Gagal mendaftarkan Service Worker:', err));
-}
 const audioPlayer = document.getElementById('audio-player');
 const playlistElement = document.getElementById('playlist');
 const currentTrackElement = document.getElementById('current-track');
 const artistNameElement = document.getElementById('artist-name');
+const canvas = document.getElementById('visualizer');
+const ctx = canvas.getContext('2d');
+
 let playlistItems = [];
 let currentTrackIndex = -1;
 let isLoading = false;
 let fallbackTimer;
-const canvas = document.getElementById('visualizer');
-const ctx = canvas.getContext('2d');
 let audioContext, analyser, isVisualizerInitialized = false;
 
-// === FUNGSI PEMBANTU YANG DIPERBAIKI PENEMPATANNYA ===
-function cleanAndSeparateTitle(fileName) {
-    // Definisi cleanName ada di dalam scope yang benar
-    let cleanName = fileName.replace(/\.(mp3|m4a|wav)$/i, "").replace(/\[[\w-]{11}\]$/, "").trim();
-    const parts = cleanName.split(" - ");
-    if (parts.length > 1) {
-        return { artist: parts[0].trim(), title: parts.slice(1).join(" - ").trim() };
-    }
-    // Mengembalikan cleanName jika tidak ada pemisah
-    return { artist: "Unknown Artist", title: cleanName };
+// --- Registrasi Service Worker ---
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/sw.js')
+        .then(reg => console.log('Service Worker terdaftar!', reg))
+        .catch(err => console.error('Gagal mendaftarkan Service Worker:', err));
 }
 
-// === Logika JSONP untuk mengambil daftar lagu ===
+// === FUNGSI UTAMA & LOGIKA APLIKASI ===
+
+// 1. Fungsi untuk mengambil data menggunakan JSONP
+function fetchAndDisplayPlaylist() {
+    const script = document.createElement('script');
+    script.src = `${API_URL}?callback=loadPlaylist`;
+    script.onerror = () => { showError('Gagal memuat skrip API. Cek URL atau blokiran jaringan.'); };
+    document.body.appendChild(script);
+}
+
+// 2. Callback yang dipanggil oleh server GAS
 function loadPlaylist(result) {
     if (result.success) {
         playlistItems = result.data;
@@ -41,14 +44,33 @@ function loadPlaylist(result) {
     }
 }
 
-function fetchAndDisplayPlaylist() {
-    const script = document.createElement('script');
-    script.src = `${API_URL}?callback=loadPlaylist`;
-    script.onerror = () => { showError('Gagal memuat API. Cek URL atau blokiran jaringan.'); };
-    document.body.appendChild(script);
+// 3. Menampilkan daftar putar awal
+function displayInitialPlaylist() {
+    playlistElement.innerHTML = "";
+    playlistItems.forEach((file, index) => {
+        const item = document.createElement("div");
+        item.className = "playlist-item";
+        item.dataset.index = index;
+        item.onclick = e => { if (e.target.tagName !== "BUTTON") { playTrack(index) } };
+        
+        const { artist, title } = cleanAndSeparateTitle(file.name);
+        
+        item.innerHTML = `
+            <div class="track-info">
+                <span class="track-title">${title}</span>
+                <span class="track-subtitle">${artist}</span>
+            </div>
+            <button class="download-btn" data-id="${file.id}">Offline</button>
+        `;
+        playlistElement.appendChild(item);
+    });
+    document.querySelectorAll(".download-btn").forEach(button => {
+        button.onclick = downloadTrackForOffline;
+    });
+    checkCachedTracks();
 }
 
-// === LOGIKA PEMUTARAN HIBRIDA (Tidak Berubah) ===
+// 4. Logika pemutaran hibrida
 function playTrack(index) {
     if (isLoading || index < 0 || index >= playlistItems.length) return;
     if (index === currentTrackIndex) {
@@ -78,13 +100,14 @@ function playTrack(index) {
     }, 3000);
 }
 
+// 5. Rencana cadangan: ambil via proxy
 async function fetchTrackViaProxy(trackId) {
     try {
         const proxyUrl = `${API_URL}&action=getTrack&id=${trackId}`;
         const response = await fetch(proxyUrl);
         const result = await response.json();
         
-        if (result.dataUri.startsWith('data:')) {
+        if (result.dataUri && result.dataUri.startsWith('data:')) {
             audioPlayer.src = result.dataUri;
             audioPlayer.play();
         } else {
@@ -95,48 +118,15 @@ async function fetchTrackViaProxy(trackId) {
     }
 }
 
-// === EVENT LISTENERS (Tidak Berubah) ===
-audioPlayer.addEventListener('playing', () => {
-    isLoading = false;
-    clearTimeout(fallbackTimer);
-});
+// === FUNGSI PEMBANTU ===
 
-audioPlayer.addEventListener('error', (e) => {
-    if (audioPlayer.src.includes('drive.google.com') && currentTrackIndex !== -1) {
-        console.error("Error streaming langsung, memicu fallback proxy.", e);
-        clearTimeout(fallbackTimer);
-        fetchTrackViaProxy(playlistItems[currentTrackIndex].id);
+function cleanAndSeparateTitle(fileName) {
+    let cleanName = fileName.replace(/\.(mp3|m4a|wav)$/i, "").replace(/\[[\w-]{11}\]$/, "").trim();
+    const parts = cleanName.split(" - ");
+    if (parts.length > 1) {
+        return { artist: parts[0].trim(), title: parts.slice(1).join(" - ").trim() };
     }
-});
-
-audioPlayer.addEventListener("ended", () => {
-    if (playlistItems.length > 0) {
-        playTrack((currentTrackIndex + 1) % playlistItems.length);
-    }
-});
-
-// === Sisa Fungsi Lainnya (Tidak Berubah) ===
-function displayInitialPlaylist() {
-    playlistElement.innerHTML = "";
-    playlistItems.forEach((file, index) => {
-        const item = document.createElement("div");
-        item.className = "playlist-item";
-        item.dataset.index = index;
-        item.onclick = e => { if (e.target.tagName !== "BUTTON") { playTrack(index) } };
-        const { artist, title } = cleanAndSeparateTitle(file.name);
-        item.innerHTML = `
-            <div class="track-info">
-                <span class="track-title">${title}</span>
-                <span class="track-subtitle">${artist}</span>
-            </div>
-            <button class="download-btn" data-id="${file.id}">Offline</button>
-        `;
-        playlistElement.appendChild(item);
-    });
-    document.querySelectorAll(".download-btn").forEach(button => {
-        button.onclick = downloadTrackForOffline;
-    });
-    checkCachedTracks();
+    return { artist: "Unknown Artist", title: cleanName };
 }
 
 async function downloadTrackForOffline(event) {
@@ -186,6 +176,8 @@ function showError(message) {
     playlistElement.innerHTML = `<div class="loader">${message}</div>`;
 }
 
+// === VISUALIZER ===
+
 function setupAudioVisualizer() {
     canvas.width = canvas.offsetWidth;
     canvas.height = canvas.offsetHeight;
@@ -231,5 +223,26 @@ function renderRadialFrame() {
     requestAnimationFrame(renderRadialFrame);
 }
 
-// Memulai aplikasi
+// === EVENT LISTENERS ===
+audioPlayer.addEventListener('playing', () => {
+    isLoading = false;
+    clearTimeout(fallbackTimer);
+});
+
+audioPlayer.addEventListener('error', (e) => {
+    if (audioPlayer.src.includes('drive.google.com') && currentTrackIndex !== -1) {
+        console.error("Error streaming langsung, memicu fallback proxy.", e);
+        clearTimeout(fallbackTimer);
+        fetchTrackViaProxy(playlistItems[currentTrackIndex].id);
+    }
+});
+
+audioPlayer.addEventListener("ended", () => {
+    if (playlistItems.length > 0) {
+        playTrack((currentTrackIndex + 1) % playlistItems.length);
+    }
+});
+
+// === MEMULAI APLIKASI ===
 fetchAndDisplayPlaylist();
+
